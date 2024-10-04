@@ -1,4 +1,4 @@
-# Vision-Language Model Finetuning: Molmo-7B-D-0924
+# Vision-Language-Model Finetuning: Molmo-7B-D-0924
 
 This repository contains code to finetune the **Molmo-7B-D-0924** Vision-Language Model from [Allen.ai](https://github.com/allenai) for two specific tasks:
 
