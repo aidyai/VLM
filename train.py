@@ -3,7 +3,7 @@
 
 from pathlib import Path
 import modal
-from model import finetune_vlm
+from src.model import finetune_vlm
 
 
 
