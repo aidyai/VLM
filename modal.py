@@ -39,17 +39,27 @@ timeout = 7200  # in seconds this is 2 hrs
     retries=retries
 )
 def train():
+
+    from VLM.utils.data import dataset2json
+
+    load_dotenv()
+    HF_TOKEN = os.getenv("hf_token")
+    DATASET_ID = os.getenv("dataset_id")
+    WANDB_APIKEY = os.getenv("wandb_api_key")
+
+    login(token=HF_TOKEN)
+    wandb.login(key=WANDB_APIKEY)
+
+    dataset2json(dataset_name, json_file)
     
     experiment_dir = CHECKPOINTS_PATH 
 
-    from VLM.main.model import train_model
     print("⚡️ starting training.........")  # we can still create options for resuming from checkpoint
-    train_model(experiment_dir)
 
     import subprocess
     import sys
     subprocess.run(
-        ["python", "train.py"],
+        ["python", "./utils/run.py"],
         stdout=sys.stdout, stderr=sys.stderr,
         check=True,
     )
