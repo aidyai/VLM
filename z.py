@@ -4,7 +4,9 @@
 import modal
 from modal import Image
 
-cuda_version = "12.2.0"  # should be no greater than host CUDA version
+volume = modal.Volume.from_name("vlm-training", create_if_missing=True)
+
+cuda_version = "12.1.0"  # should be no greater than host CUDA version
 flavor = "devel"  #  includes full CUDA toolkit
 operating_sys = "ubuntu22.04"
 tag = f"{cuda_version}-{flavor}-{operating_sys}"
@@ -36,14 +38,17 @@ vlm = (
 )
 
 
-app = modal.App("vlm-train", image=vlm)
-volume = modal.Volume.from_name("vlm-training", create_if_missing=True)
+app = modal.App("vlm-training", image=vlm)
+volume = modal.Volume.from_name("model-weights-vol", create_if_missing=True)
+CHECKPOINTS_PATH = "/vol/experiment"
+
+
+
 retries = modal.Retries(initial_delay=0.0, max_retries=10)
 timeout = 7200  # in seconds this is 2 hrs
 
-
 @app.function(
-    # volumes=volumes,
+    volumes={CHECKPOINTS_PATH: volume},
     gpu=modal.gpu.H100(count=2),
     timeout=timeout, 
     retries=retries
@@ -51,9 +56,9 @@ timeout = 7200  # in seconds this is 2 hrs
 def train():
     import os
     import subprocess
+    from pathlib import Path
     import sys
     import wandb
-    from pathlib import Path
     from VLM.utils.data import format2json
     from dotenv import load_dotenv
     from huggingface_hub import login
@@ -62,30 +67,12 @@ def train():
     # Set up training parameters
     MODEL_NAME = "allenai/Molmo-7B-D-0924"
     DEEPSPEEDPATH = "VLM/utils/zero3.json"
-    
-    # base_path = Path("/content/local_dir")
-    # OUTPUT_DIR = base_path / "molmo"
-    # JSON_FILE = base_path / "output.json"
-    # IMAGE_FOLDER = base_path / "IMG"
-    # OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    # IMAGE_FOLDER.mkdir(parents=True, exist_ok=True)
-
-    OUTPUT_DIR = "local_dir/molmo"
-    JSON_FILE = "local_dir/output.json"
-    IMAGE_FOLDER = "local_dir/IMG"
 
 
-    HF_TOKEN = "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"
-    DATASET_ID = "aidystark/fashion-tag"
-    WANDB_APIKEY = "0d505324ba165d96687f3624d4310bf171485b9d"
 
-    login(token=HF_TOKEN)
-    wandb.login(key=WANDB_APIKEY) 
 
-    # Call the function from data.py to process and format the dataset
-    format2json(DATASET_ID, JSON_FILE, IMAGE_FOLDER)
-    
-    
+
+
     print("⚡️ Starting training...")
 
     # Construct the DeepSpeed command
@@ -149,3 +136,31 @@ def train():
         print('Error:', e.stderr)
 
     print("Training completed.") 
+
+
+
+base_path = Path("/local_dir")
+
+DATASET_NAME = "aidystark/fashion-tag"
+OUTPUT_DIR = base_path / "molmo"
+JSON_FILE = base_path / "output.json"
+IMAGE_FOLDER = base_path / "IMG"
+
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+IMAGE_FOLDER.mkdir(parents=True, exist_ok=True)
+
+HF_TOKEN = "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"
+DATASET_ID = "aidystark/fashion-tag"
+JSON_FILE = "output.json"
+WANDB_APIKEY = "0d505324ba165d96687f3624d4310bf171485b9d"
+
+login(token=HF_TOKEN)
+wandb.login(key=WANDB_APIKEY)
+
+
+# Ensure output directory exists
+if not os.path.exists(IMAGE_FOLDER):
+    os.makedirs(IMAGE_FOLDER)
+
+# Call the function from data.py to process and format the dataset
+format2json(DATASET_NAME, JSON_FILE, IMAGE_FOLDER)

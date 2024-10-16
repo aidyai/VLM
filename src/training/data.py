@@ -229,7 +229,12 @@ def llava_to_openai(conversations, is_video=False):
 
     transformed_data = []
     for conversation in conversations:
-        transformed_content = replace_image_tokens(conversation["value"], is_video=is_video)
+        transformed_content = conversation["value"]
+        if isinstance(transformed_content, list):
+            transformed_content = ", ".join(transformed_content)
+        else:
+            transformed_content = replace_image_tokens(transformed_content, is_video=is_video)
+        
         transformed_entry = {
             "role": role_mapping.get(conversation["from"], conversation["from"]),
             "content": transformed_content,
