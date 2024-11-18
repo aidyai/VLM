@@ -1,6 +1,6 @@
-# Vision-Language-Model Finetuning: Molmo-7B-D-0924
+# Vision-Language-Model Finetuning: Mini-V 2.6
 
-This repository contains code to finetune the **Molmo-7B-D-0924** Vision-Language Model from [Allen.ai](https://github.com/allenai) for two specific tasks:
+This repository contains code to finetune the **Mini-V 2.6** Vision-Language Model from [Allen.ai](https://github.com/allenai) for two specific tasks:
 
 1. Optical Character Recognition (OCR) for a Low Resource Language that is Diacritics Sensitive
 2. Fashion Tag Generator
