@@ -80,7 +80,7 @@ To train both the language model and the vision model with LoRA:
 
 This project is based on the work from the following repository:fine-tuning approach:
 ```
-@misc{philschmid2023,
+@misc{OpenBMB,
   author = {OpenBMB},
   title = {Finetuning MiniCPM-V-2_6 for Custom VLM Task},
   year = {2024},
