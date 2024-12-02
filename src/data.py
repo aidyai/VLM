@@ -35,7 +35,7 @@ for sample in tqdm.tqdm(ds['train'], desc="Processing Dataset"):
     uuid = shortuuid.uuid()
     sample_dict = {
         'id': uuid,
-        'image': f"{uuid}.jpg"
+        'image': f"./image/{uuid}.jpg"
     }
 
     # Save the image

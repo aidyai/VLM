@@ -1,18 +1,21 @@
 import os
-import subprocess
 from pathlib import Path
-from dotenv import load_dotenv
-from modal import App, Volume, Image, gpu
+from uuid import uuid4
+from modal import App, Volume, Image, gpu, Retries
+import subprocess
 
-load_dotenv()
+
 
 # Model and storage setup
-volume = Volume.from_name("ocrvlm-training", create_if_missing=True)
 cuda_version = "12.1.0"
 flavor = "devel"
 operating_sys = "ubuntu22.04"
 tag = f"{cuda_version}-{flavor}-{operating_sys}"
 
+# Create volume for training
+volume = Volume.from_name("ocrvlm-training", create_if_missing=True)
+
+# Container image setup
 ocr_vlm = (
     Image.from_registry(f"nvidia/cuda:{tag}", add_python="3.11")
     .apt_install("git")
@@ -26,23 +29,35 @@ ocr_vlm = (
     )
 )
 
+# Create Modal app
 app = App("ocr-vlm", image=ocr_vlm)
-volume = Volume.from_name("model-weights-vol", create_if_missing=True)
-CHECKPOINTS_PATH = "/vol/experiment"
 
-retries = modal.Retries(initial_delay=0.0, max_retries=10)
+# Retry configuration
+retries = Retries(initial_delay=0.0, max_retries=1)
+
+# Long timeout (2 hours)
 timeout = 7200  # 2 hrs
 
 @app.function(
-    volumes={CHECKPOINTS_PATH: volume},
-    gpu=gpu.H100(count=2),
+    volumes={"/vol/experiment": volume},
+    gpu=gpu.A100(count=2),
     timeout=timeout, 
     retries=retries
 )
-def train():
-    # Load sensitive data from environment
-    HF_TOKEN = os.getenv("HF_TOKEN")
-    WANDB_APIKEY = os.getenv("WANDB_APIKEY")
+
+def train(experiment=None):
+    # Generate a unique experiment name if not provided
+    if experiment is None:
+        experiment = uuid4().hex[:8]
+    
+    # Output directory for this experiment
+    # output_dir = Path("/vol/experiment/output") / experiment
+    # output_dir.mkdir(parents=True, exist_ok=True)
+
+
+    HF_TOKEN = "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"
+    WANDB_APIKEY = "0d505324ba165d96687f3624d4310bf171485b9d"
+
 
     # Ensure sensitive data is set
     if not HF_TOKEN or not WANDB_APIKEY:
@@ -55,7 +70,7 @@ def train():
     wandb.login(key=WANDB_APIKEY)
 
     # Training parameters
-    GPUS_PER_NODE = "8"
+    GPUS_PER_NODE = "2"
     NNODES = "1"
     NODE_RANK = "0"
     MASTER_ADDR = "localhost"
@@ -63,38 +78,40 @@ def train():
 
     # Model and data paths
     MODEL = "openbmb/MiniCPM-V-2_6"
-    DATA = "path/to/training_data"   # Replace with actual path
     LLM_TYPE = "qwen2"
     MODEL_MAX_LENGTH = "2048"
-    OUTPUT_DIR = "minicpm/minicipm_lora",
+    
+    current_dir = Path(__file__).parent
+    
+    DATA = current_dir / "ocr.json"
+    finetune_path = current_dir / 'src' / 'train.py'
+    deeppseed_path = current_dir / 'utils' / 'ds_config_zero2.json'
+
+    output_dir = current_dir / "usem_ocr"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
 
-    # Torchrun distributed arguments
-    distributed_args = [
+    # Full training arguments
+    finetune_args = [
+        "torchrun",
         "--nproc_per_node", GPUS_PER_NODE,
         "--nnodes", NNODES,
         "--node_rank", NODE_RANK,
         "--master_addr", MASTER_ADDR,
         "--master_port", MASTER_PORT,
-    ]
-
-    # Finetuning arguments
-    finetune_args = [
-        "torchrun",
-        *distributed_args,
-        "train.py",
+        str(finetune_path),
         "--model_name_or_path", MODEL,
         "--llm_type", LLM_TYPE,
-        "--data_path", DATA,
+        "--data_path", str(DATA),
         "--remove_unused_columns", "false",
         "--label_names", "labels",
         "--prediction_loss_only", "false",
         "--bf16", "false",
-        "--bf16_full_eval", "false",
+        # "--bf16_full_eval", "false",
         "--fp16", "true",
-        "--fp16_full_eval", "true",
+        # "--fp16_full_eval", "true",
         "--do_train",
-        "--do_eval",
+        # "--do_eval",
         "--tune_vision", "true",
         "--tune_llm", "false",
         "--use_lora", "true",
@@ -102,9 +119,9 @@ def train():
         "--model_max_length", MODEL_MAX_LENGTH,
         "--max_slice_nums", "9",
         "--max_steps", "10000",
-        "--eval_steps", "1000",
-        "--output_dir", "output/output_lora",
-        "--logging_dir", "output/output_lora",
+        # "--eval_steps", "1000",
+        "--output_dir", str(output_dir),
+        "--logging_dir", str(output_dir),
         "--logging_strategy", "steps",
         "--per_device_train_batch_size", "1",
         "--per_device_eval_batch_size", "1",
@@ -120,7 +137,7 @@ def train():
         "--lr_scheduler_type", "cosine",
         "--logging_steps", "1",
         "--gradient_checkpointing", "true",
-        "--deepspeed", "ds_config_zero2.json",
+        "--deepspeed", str(deeppseed_path),
         "--report_to", "wandb"
     ]
 
@@ -139,4 +156,13 @@ def train():
         print('Output:', e.stdout)
         print('Error:', e.stderr)
 
-    print("Training completed.")
+    print(f"Training completed for experiment: {experiment}")
+
+# Local entrypoint to start the training job
+@app.local_entrypoint()
+def main(experiment: str = None):
+    if experiment is None:
+        experiment = uuid4().hex[:8]
+    
+    print(f"🚀 Starting OCR VLM training experiment: {experiment}")
+    train.remote(experiment)
