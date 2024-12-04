@@ -45,19 +45,21 @@ timeout = 7200  # 2 hrs
     retries=retries
 )
 
-def train(experiment=None):
-    # Generate a unique experiment name if not provided
-    if experiment is None:
-        experiment = uuid4().hex[:8]
+# def train(experiment=None):
+    # # Generate a unique experiment name if not provided
+    # if experiment is None:
+    #     experiment = uuid4().hex[:8]
     
-    # Output directory for this experiment
-    # output_dir = Path("/vol/experiment/output") / experiment
-    # output_dir.mkdir(parents=True, exist_ok=True)
+    # # Output directory for this experiment
+    # # output_dir = Path("/vol/experiment/output") / experiment
+    # # output_dir.mkdir(parents=True, exist_ok=True)
 
 
-    HF_TOKEN = "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"
+def train():
+
+    HF_TOKEN = "hf_fwLedemoMdFfpurzXxaArMIOGlboMxGUup"
     WANDB_APIKEY = "0d505324ba165d96687f3624d4310bf171485b9d"
-
+    WANDB_PROJECT = "usem_ocr"
 
     # Ensure sensitive data is set
     if not HF_TOKEN or not WANDB_APIKEY:
@@ -68,6 +70,7 @@ def train(experiment=None):
     import wandb
     login(token=HF_TOKEN)
     wandb.login(key=WANDB_APIKEY)
+    wandb.init(project=WANDB_PROJECT)
 
     # Training parameters
     GPUS_PER_NODE = "2"
@@ -83,7 +86,8 @@ def train(experiment=None):
     
     current_dir = Path(__file__).parent
     
-    DATA = current_dir / "ocr.json"
+    TRAIN_DATA = current_dir / "train_ocr.json"
+    EVAL_DATA = current_dir / "eval_ocr.json"
     finetune_path = current_dir / 'src' / 'train.py'
     deeppseed_path = current_dir / 'utils' / 'ds_config_zero2.json'
 
@@ -102,16 +106,17 @@ def train(experiment=None):
         str(finetune_path),
         "--model_name_or_path", MODEL,
         "--llm_type", LLM_TYPE,
-        "--data_path", str(DATA),
+        "--data_path", str(TRAIN_DATA),
+        "--eval_data_path", str(EVAL_DATA),
         "--remove_unused_columns", "false",
         "--label_names", "labels",
         "--prediction_loss_only", "false",
         "--bf16", "false",
-        # "--bf16_full_eval", "false",
+        "--bf16_full_eval", "false",
         "--fp16", "true",
-        # "--fp16_full_eval", "true",
+        "--fp16_full_eval", "true",
         "--do_train",
-        # "--do_eval",
+        "--do_eval",
         "--tune_vision", "true",
         "--tune_llm", "false",
         "--use_lora", "true",
@@ -119,7 +124,7 @@ def train(experiment=None):
         "--model_max_length", MODEL_MAX_LENGTH,
         "--max_slice_nums", "9",
         "--max_steps", "10000",
-        # "--eval_steps", "1000",
+        "--eval_steps", "1000",
         "--output_dir", str(output_dir),
         "--logging_dir", str(output_dir),
         "--logging_strategy", "steps",
@@ -128,7 +133,7 @@ def train(experiment=None):
         "--gradient_accumulation_steps", "1",
         "--evaluation_strategy", "steps",
         "--save_strategy", "steps",
-        "--save_steps", "1000",
+        "--save_steps", "100",
         "--save_total_limit", "10",
         "--learning_rate", "1e-6",
         "--weight_decay", "0.1",
@@ -140,6 +145,11 @@ def train(experiment=None):
         "--deepspeed", str(deeppseed_path),
         "--report_to", "wandb"
     ]
+
+    # Set the PYTHONPATH to include the necessary directories
+    # env = os.environ.copy()
+    # env['PYTHONPATH'] = f"{os.getcwd()}/VLM/src:" + env.get('PYTHONPATH', '')
+
 
     # Run the command in a subprocess
     try:
@@ -156,13 +166,4 @@ def train(experiment=None):
         print('Output:', e.stdout)
         print('Error:', e.stderr)
 
-    print(f"Training completed for experiment: {experiment}")
-
-# Local entrypoint to start the training job
-@app.local_entrypoint()
-def main(experiment: str = None):
-    if experiment is None:
-        experiment = uuid4().hex[:8]
-    
-    print(f"🚀 Starting OCR VLM training experiment: {experiment}")
-    train.remote(experiment)
+    print(f"Training completed for experiment")

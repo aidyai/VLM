@@ -11,7 +11,8 @@ ds = load_dataset("aidystark/usem_ocr")
 
 # Paths for saving processed data
 auto_data_image_path = './image'  # Path where images will be saved
-auto_data_data_path = './ocr.json'  # Path to save the JSON data
+auto_data_train_path = './train_ocr.json'  # Path to save the training JSON data
+auto_data_eval_path = './eval_ocr.json'   # Path to save the evaluation JSON data
 
 # Ensure the directory for saving images exists
 os.makedirs(auto_data_image_path, exist_ok=True)
@@ -28,39 +29,48 @@ description_list = [
     "Extract all textual elements from the image which are written in the Ibibio language, ensuring precise recognition of the alphabet and correct diacritical representation."
 ]
 
-# Process the dataset
-ocr_data = []
+def process_split(split_data, output_path):
+    """
+    Process a specific split of the dataset and save to JSON
+    """
+    ocr_data = []
 
-for sample in tqdm.tqdm(ds['train'], desc="Processing Dataset"):
-    uuid = shortuuid.uuid()
-    sample_dict = {
-        'id': uuid,
-        'image': f"./image/{uuid}.jpg"
-    }
+    for sample in tqdm.tqdm(split_data, desc=f"Processing {output_path} Dataset"):
+        uuid = shortuuid.uuid()
+        sample_dict = {
+            'id': uuid,
+            'image': f"VLM/image/{uuid}.jpg"
+        }
 
-    # Save the image
-    image_path = os.path.join(auto_data_image_path, f"{uuid}.jpg")
-    
-    # If it's already a PIL Image, save directly
-    # If it's a path or bytes, open it first
-    if isinstance(sample['image'], Image.Image):
-        sample['image'].save(image_path)
-    else:
-        Image.open(sample['image']).save(image_path)
+        # Save the image
+        image_path = os.path.join(auto_data_image_path, f"{uuid}.jpg")
+        
+        # If it's already a PIL Image, save directly
+        # If it's a path or bytes, open it first
+        if isinstance(sample['image'], Image.Image):
+            sample['image'].save(image_path)
+        else:
+            Image.open(sample['image']).save(image_path)
 
-    # Create the conversation with a random description and the provided text
-    conversations = [
-        {"role": "user", "content": f"<image>\n{random.choice(description_list)}"},
-        {"role": "assistant", "content": sample['text']}
-    ]
-    sample_dict['conversations'] = conversations
+        # Create the conversation with a random description and the provided text
+        conversations = [
+            {"role": "user", "content": f"<image>\n{random.choice(description_list)}"},
+            {"role": "assistant", "content": sample['text']}
+        ]
+        sample_dict['conversations'] = conversations
 
-    # Append the processed data
-    ocr_data.append(sample_dict)
+        # Append the processed data
+        ocr_data.append(sample_dict)
 
-# Save the processed data to a JSON file
-with open(auto_data_data_path, 'w', encoding='utf-8') as f:
-    json.dump(ocr_data, f, indent=4, ensure_ascii=False)
+    # Save the processed data to a JSON file
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(ocr_data, f, indent=4, ensure_ascii=False)
 
-print(f"Processing complete. Data saved to {auto_data_data_path}")
-print(f"Total samples processed: {len(ocr_data)}")
+    print(f"Processing complete. Data saved to {output_path}")
+    print(f"Total samples processed: {len(ocr_data)}")
+
+# Process train split
+process_split(ds['train'], auto_data_train_path)
+
+# Process test split (which is the validation/eval split)
+process_split(ds['test'], auto_data_eval_path)
