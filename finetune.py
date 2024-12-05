@@ -54,13 +54,13 @@ from huggingface_hub import login
 import torch
 from transformers import AutoModelForCausalLM, AutoProcessor, BitsAndBytesConfig
 from datasets import load_dataset
-from data import format_data
+from dataset import format_data
 
 
 
 
 def train_model():
-    HF_TOKEN = "hf_fwLedemoMdFfpurzXxaArMIOGlboMxGUup"
+    HF_TOKEN = "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"
     WANDB_APIKEY = "0d505324ba165d96687f3624d4310bf171485b9d"
     WANDB_PROJECT = "usem_ocr"
     DATASET_ID = "aidystark/usem_ocr"
