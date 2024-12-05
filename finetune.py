@@ -74,6 +74,7 @@ def train_model():
     import wandb
     login(token=HF_TOKEN)
     wandb.login(key=WANDB_APIKEY)
+    wandb.init(project=WANDB_PROJECT)
 
     dataset = load_dataset(DATASET_ID, split='train')
     formatted_dataset = [format_data(sample) for sample in dataset]
@@ -138,40 +139,34 @@ def train_model():
     )
     args.remove_unused_columns = False
 
-    def collate_fn_molmo(examples):
-        # Extract and process text and visual information from each example
+    # Create a data collator to encode text and image pairs
+    def collate_fn(examples):
+        # Get the texts and images, and apply the chat template
         texts = [processor.apply_chat_template(example["messages"], tokenize=False) for example in examples]
-        image_inputs, _ = process_vision_info([example["messages"] for example in examples])
-        
-        # If image_inputs is None, you may want to handle it appropriately
-        if image_inputs is None:
-            image_inputs = []  # or handle as needed
-
-        # Tokenize the texts and process the images using the processor
+        image_inputs = [process_vision_info(example["messages"])[0] for example in examples]
+    
+        # Tokenize the texts and process the images
         batch = processor(text=texts, images=image_inputs, return_tensors="pt", padding=True)
-
-        # Create labels for the language model
+    
+        # The labels are the input_ids, and we mask the padding tokens in the loss computation
         labels = batch["input_ids"].clone()
-        labels[labels == processor.tokenizer.pad_token_id] = -100  # Ignore padding tokens in loss calculation
-
-        # Optionally, exclude image tokens from the loss calculation
-        image_token_id = processor.tokenizer.convert_tokens_to_ids(processor.image_token)
-        labels[labels == image_token_id] = -100
-
-        # Add the labels to the batch
+        labels[labels == processor.tokenizer.pad_token_id] = -100  #
+        # Ignore the image token index in the loss computation (model specific)
+        if isinstance(processor, Qwen2VLProcessor):
+            image_tokens = [151652,151653,151655]
+        else: 
+            image_tokens = [processor.tokenizer.convert_tokens_to_ids(processor.image_token)]
+        for image_token_id in image_tokens:
+            labels[labels == image_token_id] = -100
         batch["labels"] = labels
-
-        # Move tensors to the appropriate device
-        batch = {k: v.to(torch.bfloat16 if bnb_config.bnb_4bit_compute_dtype == torch.bfloat16 else torch.float32) 
-                for k, v in batch.items()}
-
+    
         return batch
 
     trainer = SFTTrainer(
         model=model,
         args=args,
         train_dataset=formatted_dataset,
-        data_collator=collate_fn_molmo,
+        data_collator=collate_fn,
         dataset_text_field="",
         peft_config=peft_config,
         tokenizer=processor.tokenizer
