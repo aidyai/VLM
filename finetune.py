@@ -1,18 +1,19 @@
 import os
-import subprocess
 from pathlib import Path
-from dotenv import load_dotenv
-from modal import App, Volume, Image, gpu
+from uuid import uuid4
+from modal import App, Volume, Image, gpu, Retries
 
-load_dotenv()
 
 # Model and storage setup
-volume = Volume.from_name("ocrvlm-training", create_if_missing=True)
 cuda_version = "12.1.0"
 flavor = "devel"
 operating_sys = "ubuntu22.04"
 tag = f"{cuda_version}-{flavor}-{operating_sys}"
 
+# Create volume for training
+volume = Volume.from_name("ocrvlm-training", create_if_missing=True)
+
+# Container image setup
 ocr_vlm = (
     Image.from_registry(f"nvidia/cuda:{tag}", add_python="3.11")
     .apt_install("git")
@@ -26,24 +27,31 @@ ocr_vlm = (
     )
 )
 
+# Create Modal app
 app = App("ocr-vlm", image=ocr_vlm)
-volume = Volume.from_name("model-weights-vol", create_if_missing=True)
-CHECKPOINTS_PATH = "/vol/experiment"
 
-retries = modal.Retries(initial_delay=0.0, max_retries=10)
+# Retry configuration
+retries = Retries(initial_delay=0.0, max_retries=1)
+
+# Long timeout (2 hours)
 timeout = 7200  # 2 hrs
 
 @app.function(
-    volumes={CHECKPOINTS_PATH: volume},
-    gpu=gpu.H100(count=2),
+    volumes={"/vol/experiment": volume},
+    gpu=gpu.A100(size="80GB", count=4)
+    # gpu=gpu.A100(count=2),
     timeout=timeout, 
     retries=retries
 )
-def train():
-    # Load sensitive data from environment
-    HF_TOKEN = os.getenv("HF_TOKEN")
-    WANDB_APIKEY = os.getenv("WANDB_APIKEY")
 
+
+
+def train_model():
+    HF_TOKEN = "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"
+    WANDB_APIKEY = "0d505324ba165d96687f3624d4310bf171485b9d"
+    WANDB_PROJECT = "usem_ocr"
+    DATASET_ID = "aidystark/usem_ocr"
+    
     # Ensure sensitive data is set
     if not HF_TOKEN or not WANDB_APIKEY:
         raise ValueError("Please set Hugging Face and WandB tokens in your environment.")
@@ -51,92 +59,125 @@ def train():
     # Authenticate Hugging Face and Weights & Biases
     from huggingface_hub import login
     import wandb
+    from trl import SFTConfig, SFTTrainer
+    from transformers import Qwen2VLProcessor
+    from qwen_vl_utils import process_vision_info
+    from peft import LoraConfig
+    from huggingface_hub import login
+    import torch
+    from transformers import AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig
+    from datasets import load_dataset
+    from VLM.dataset import format_data 
+    
+    
     login(token=HF_TOKEN)
+    dataset = load_dataset(DATASET_ID, split='train')
+    formatted_dataset = [format_data(sample) for sample in dataset]
+
+    current_dir = Path(__file__).parent
+    output_dir = current_dir / "usem_ocr"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+
+    model_id = "Qwen/Qwen2-VL-7B-Instruct" 
+
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True, bnb_4bit_use_double_quant=True, 
+        bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.bfloat16
+    )
+
+    # load the processor
+    processor = AutoProcessor.from_pretrained(
+        model_id,
+        trust_remote_code=True,
+    )
+
+    # load the model
+    model = AutoModelForVision2Seq.from_pretrained(
+        model_id,
+        device_map="auto",
+        # attn_implementation="flash_attention_2", # not supported for training
+        torch_dtype=torch.bfloat16,
+        quantization_config=bnb_config
+    )
+
+
+    peft_config = LoraConfig(
+        lora_alpha=16,
+        lora_dropout=0.05,
+        r=8,
+        bias="none",
+        target_modules=["q_proj", "v_proj"],
+        task_type="CAUSAL_LM"
+    )
+
+    training_args = SFTConfig(
+        output_dir=output_dir,  # Now using the passed parameter for output directory
+        num_train_epochs=3,
+        per_device_train_batch_size=4,
+        gradient_accumulation_steps=8,
+        gradient_checkpointing=True,
+        optim="adamw_torch_fused",
+        logging_steps=5,
+        save_strategy="epoch",
+        learning_rate=2e-4,
+        bf16=True,
+        tf32=True,
+        max_grad_norm=0.3,
+        warmup_ratio=0.03,
+        lr_scheduler_type="constant",
+        push_to_hub=True,
+        report_to="wandb",
+        gradient_checkpointing_kwargs={"use_reentrant": False},
+        dataset_text_field="",
+        dataset_kwargs={"skip_prepare_dataset": True}
+    )
+    training_args.remove_unused_columns = False
+
+
     wandb.login(key=WANDB_APIKEY)
+    wandb.init(
+        project=WANDB_PROJECT,
+        config=training_args,
+    )
 
-    # Training parameters
-    GPUS_PER_NODE = "8"
-    NNODES = "1"
-    NODE_RANK = "0"
-    MASTER_ADDR = "localhost"
-    MASTER_PORT = "6001"
+    # Create a data collator to encode text and image pairs
+    def qwen_collate_fn(examples):
+      # Get the texts and images, and apply the chat template
+      texts = [processor.apply_chat_template(example["messages"], tokenize=False) for example in examples]
+      image_inputs = [process_vision_info(example["messages"])[0] for example in examples]
+  
+      # Tokenize the texts and process the images
+      batch = processor(text=texts, images=image_inputs, return_tensors="pt", padding=True)
+  
+      # The labels are the input_ids, and we mask the padding tokens in the loss computation
+      labels = batch["input_ids"].clone()
+      labels[labels == processor.tokenizer.pad_token_id] = -100  #
+      # Ignore the image token index in the loss computation (model specific)
+      if isinstance(processor, Qwen2VLProcessor):
+          image_tokens = [151652,151653,151655]
+      else: 
+          image_tokens = [processor.tokenizer.convert_tokens_to_ids(processor.image_token)]
+      for image_token_id in image_tokens:
+          labels[labels == image_token_id] = -100
+      batch["labels"] = labels
+  
+      return batch
 
-    # Model and data paths
-    MODEL = "openbmb/MiniCPM-V-2_6"
-    DATA = "path/to/training_data"   # Replace with actual path
-    LLM_TYPE = "qwen2"
-    MODEL_MAX_LENGTH = "2048"
-    OUTPUT_DIR = "minicpm/minicipm_lora",
+    trainer = SFTTrainer(
+        model=model,
+        args=training_args,
+        train_dataset=formatted_dataset,
+        data_collator=qwen_collate_fn,
+        dataset_text_field="",
+        peft_config=peft_config,
+        tokenizer=processor.tokenizer
+    )
 
 
-    # Torchrun distributed arguments
-    distributed_args = [
-        "--nproc_per_node", GPUS_PER_NODE,
-        "--nnodes", NNODES,
-        "--node_rank", NODE_RANK,
-        "--master_addr", MASTER_ADDR,
-        "--master_port", MASTER_PORT,
-    ]
+    print("train")
 
-    # Finetuning arguments
-    finetune_args = [
-        "torchrun",
-        *distributed_args,
-        "train.py",
-        "--model_name_or_path", MODEL,
-        "--llm_type", LLM_TYPE,
-        "--data_path", DATA,
-        "--remove_unused_columns", "false",
-        "--label_names", "labels",
-        "--prediction_loss_only", "false",
-        "--bf16", "false",
-        "--bf16_full_eval", "false",
-        "--fp16", "true",
-        "--fp16_full_eval", "true",
-        "--do_train",
-        "--do_eval",
-        "--tune_vision", "true",
-        "--tune_llm", "false",
-        "--use_lora", "true",
-        "--lora_target_modules", r"llm\..*layers\.\d+\.self_attn\.(q_proj|k_proj|v_proj|o_proj)",
-        "--model_max_length", MODEL_MAX_LENGTH,
-        "--max_slice_nums", "9",
-        "--max_steps", "10000",
-        "--eval_steps", "1000",
-        "--output_dir", "output/output_lora",
-        "--logging_dir", "output/output_lora",
-        "--logging_strategy", "steps",
-        "--per_device_train_batch_size", "1",
-        "--per_device_eval_batch_size", "1",
-        "--gradient_accumulation_steps", "1",
-        "--evaluation_strategy", "steps",
-        "--save_strategy", "steps",
-        "--save_steps", "1000",
-        "--save_total_limit", "10",
-        "--learning_rate", "1e-6",
-        "--weight_decay", "0.1",
-        "--adam_beta2", "0.95",
-        "--warmup_ratio", "0.01",
-        "--lr_scheduler_type", "cosine",
-        "--logging_steps", "1",
-        "--gradient_checkpointing", "true",
-        "--deepspeed", "ds_config_zero2.json",
-        "--report_to", "wandb"
-    ]
+    trainer.train()
+    trainer.save_model(training_args.output_dir)
 
-    # Run the command in a subprocess
-    try:
-        result = subprocess.run(
-            finetune_args,
-            check=True,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        print('Output:', result.stdout)
-    except subprocess.CalledProcessError as e:
-        print('Command failed. Return code:', e.returncode)
-        print('Output:', e.stdout)
-        print('Error:', e.stderr)
 
-    print("Training completed.")

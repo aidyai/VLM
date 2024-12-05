@@ -1,13 +1,11 @@
 # Vision-Language-Model Finetuning: Mini-V 2.6
-
-This repository contains code to finetune the **Mini-V 2.6** Vision-Language Model from [Allen.ai](https://github.com/allenai) for two specific tasks:
+This repository contains code to finetune the **QWEN 2 vl** Vision-Language Model from [Allen.ai](https://github.com/allenai) for two specific tasks:
 
 1. Optical Character Recognition (OCR) for a Low Resource Language that is Diacritics Sensitive
-2. Fashion Tag Generator
 
 ## Installation
 
-Install the required packages using either `requirements.txt` or `environment.yml`.
+Install the required packages either `requirements.txt` 
 
 ### Using requirements.txt
 
@@ -16,15 +14,7 @@ pip install -r requirements.txt
 pip install flash-attn --no-build-isolation
 ```
 
-### Using environment.yaml
 
-```bash
-conda env create -f environment.yaml
-conda activate molmo-env
-pip install flash-attn --no-build-isolation
-```
-
-**Note:** Install flash-attn after running other libraries from requirements.txt or environment.yaml.
 
 ## Dataset Preparation
 
@@ -32,44 +22,38 @@ pip install flash-attn --no-build-isolation
 
 For the OCR task, the dataset should consist of images containing text in the target low-resource language and their corresponding transcriptions. Ensure that the dataset captures the diacritical marks accurately.
 
-### Fashion Dataset
-
-For the Fashion Tag Generator task, the dataset should include fashion images and their corresponding tags or descriptions.
-
-Both datasets should follow the LLaVA JSON format. Each entry contains image paths and conversations describing the content.
-
 ### Example Dataset Format
 
 ```json
 [
-  {
-    "id": "ocr_001",
-    "image": "text_image_001.jpg",
-    "conversations": [
-      {
-        "from": "human",
-        "value": "<image>\nWhat text is shown in this image?"
-      },
-      {
-        "from": "gpt",
-        "value": "The text in the image reads: 'Héllò Wórld' in the target language with diacritics."
-      }
-    ]
-  },
-  {
-    "id": "fashion_001",
-    "image": "fashion_item_001.jpg",
-    "conversations": [
-      {
-        "from": "human",
-        "value": "<image>\nDescribe this fashion item and provide relevant tags."
-      },
-      {
-        "from": "gpt",
-        "value": "This image shows a red floral summer dress. Tags: #summerdress #floralprint #redDress #casualWear"
-      }
-    ]
-  }
+    {
+        "id": "663A5fFR4JBaSbchfQxsMU",
+        "image": "663A5fFR4JBaSbchfQxsMU.jpg",
+        "conversations": [
+            {
+                "role": "user",
+                "content": "<image>\nPerform precise OCR on the image to extract Ibibio text, sentences, and words, while maintaining the integrity of all diacritical markers and orthographic nuances."
+            },
+            {
+                "role": "assistant",
+                "content": "ii. Utem Ayop\nKe esioho utom utọ inwañ efep.\n"
+            }
+        ]
+    },
+    {
+        "id": "DXsPpRUhGshC53szkie8zr",
+        "image": "DXsPpRUhGshC53szkie8zr.jpg",
+        "conversations": [
+            {
+                "role": "user",
+                "content": "<image>\nExtract all the written texts from the image from beginning to end, taking note of the Ibibio alphabet (Aa, Ʌʌ, Bb, Dd, Ee, Ff, Gg, Gh gh, Hh, Ii, Ịị, Kk, Kp kp, Mm, Nn, Ññ, Ñw ñw, Ọọ, Pp, Rr, Ss, Tt, Uu, Ww, Yy, Əə) from the images, ensuring full retention of diacritical markers and orthographic integrity."
+            },
+            {
+                "role": "assistant",
+                "content": "etƏkayịn amanake. Utọ etƏkayịn idọ ana .\n"
+            }
+        ]
+    },
 ]
 ```
 
@@ -79,57 +63,28 @@ Ensure that the image paths in the dataset match the provided `--image_folder`.
 
 To run the training script, use the following commands:
 
-### Full Finetuning
-
-```bash
-bash scripts/finetune.sh
-```
 
 ### Finetune with LoRA
 
 To train the language model with LoRA and perform full training on the vision model:
 
-```bash
-bash scripts/finetune_lora.sh
+```python
+finetune.py
 ```
 
 To train both the language model and the vision model with LoRA:
 
-```bash
-bash scripts/finetune_lora_vision.sh
-```
-
-## Configuration
-
-The `config.json` file is where you define your training settings. Here's an example configuration:
-
-```json
-{
-  "model": "allenai/molmo-7b-d-0924",
-  "dataset_path": "./dataset/",
-  "batch_size": 32,
-  "learning_rate": 5e-5,
-  "epochs": 3,
-  "task": ["ocr", "fashion_tagging"]
-}
-```
-
-Adjust the parameters as needed to fit your use case.
-
-## Customizing the Model
-
-If you want to modify the model architecture or integrate custom parameter-efficient fine-tuning techniques, check the `model_utils.py` file for instructions on adding custom layers or parameters.
 
 ## Citation
 
 This project is based on the work from the following repository:fine-tuning approach:
 ```
-@misc{philschmid2023,
-  author = {Philipp Schmid},
-  title = {Deep Learning PyTorch Hugging Face},
+@misc{OpenBMB,
+  author = {OpenBMB},
+  title = {Finetuning MiniCPM-V-2_6 for Custom VLM Task},
   year = {2024},
   publisher = {GitHub},
   journal = {GitHub repository},
-  howpublished = {\url{https://github.com/philschmid/deep-learning-pytorch-huggingface/blob/main/training/fine-tune-multimodal-llms-with-trl.ipynb}}
+  howpublished = {\url{https://github.com/OpenBMB/MiniCPM-V/tree/main/finetune}}
 }
 ```
