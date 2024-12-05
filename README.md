@@ -1,6 +1,5 @@
-# Vision-Language-Model Finetuning: MiniCPM-V 2.6	
-
-This repository contains code to finetune the **MiniCPM-V 2.6	** Vision-Language Model from [OpenBMB](https://huggingface.co/openbmb/MiniCPM-V-2_6) for two specific tasks:
+# Vision-Language-Model Finetuning: Mini-V 2.6
+This repository contains code to finetune the **QWEN 2 vl** Vision-Language Model from [Allen.ai](https://github.com/allenai) for two specific tasks:
 
 1. Optical Character Recognition (OCR) for a Low Resource Language that is Diacritics Sensitive
 
