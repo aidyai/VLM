@@ -15,15 +15,12 @@ description_list = [
 # Function to format the data, since the image is already a PIL.Image object
 def format_data(sample):
 
-    # Use the image directly from the dataset
-    pil_image = sample['image']
-
     # Create 'messages' structure
     messages = [
         {"role": "system", "content": [{"type": "text", "text": "You are an helpful assistant who does OCR by extracting texts from Nigeria."}]},
         {"role": "user", "content": [
             {"type": "text", "text": random.choice(description_list)},
-            {"type": "image", "text": pil_image}  # Use the existing PIL.Image object
+            {"type": "image", "image": sample["image"], },
         ]},
         {"role": "assistant", "content": [{"type": "text", "text": sample['text']}]}
     ]
