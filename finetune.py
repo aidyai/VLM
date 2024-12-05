@@ -66,7 +66,7 @@ def train_model():
     import torch
     from transformers import AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig
     from datasets import load_dataset
-    from dataset import format_data 
+    from VLM.dataset import format_data 
     
     
     login(token=HF_TOKEN)
