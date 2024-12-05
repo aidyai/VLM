@@ -70,12 +70,6 @@ def train_model():
     
     
     login(token=HF_TOKEN)
-    wandb.login(key=WANDB_APIKEY)
-    wandb.init(
-        project=WANDB_PROJECT,
-        config=train_args,
-    )
-
     dataset = load_dataset(DATASET_ID, split='train')
     formatted_dataset = [format_data(sample) for sample in dataset]
 
@@ -116,7 +110,7 @@ def train_model():
         task_type="CAUSAL_LM"
     )
 
-    train_args = SFTConfig(
+    training_args = SFTConfig(
         output_dir=output_dir,  # Now using the passed parameter for output directory
         num_train_epochs=3,
         per_device_train_batch_size=4,
@@ -137,42 +131,41 @@ def train_model():
         dataset_text_field="",
         dataset_kwargs={"skip_prepare_dataset": True}
     )
-    args.remove_unused_columns = False
+    training_args.remove_unused_columns = False
+
+
+    wandb.login(key=WANDB_APIKEY)
+    wandb.init(
+        project=WANDB_PROJECT,
+        config=training_args,
+    )
 
     # Create a data collator to encode text and image pairs
     def qwen_collate_fn(examples):
-        # Get the texts and images, and apply the chat template
-        texts = [
-            processor.apply_chat_template(example, tokenize=False) for example in examples
-        ]  # Prepare texts for processing
-        image_inputs = [process_vision_info(example)[0] for example in examples]  # Process the images to extract inputs
-
-        # Tokenize the texts and process the images
-        batch = processor(
-            text=texts, images=image_inputs, return_tensors="pt", padding=True
-        )  # Encode texts and images into tensors
-
-        # The labels are the input_ids, and we mask the padding tokens in the loss computation
-        labels = batch["input_ids"].clone()  # Clone input IDs for labels
-        labels[labels == processor.tokenizer.pad_token_id] = -100  # Mask padding tokens in labels
-
-        # Ignore the image token index in the loss computation (model specific)
-        if isinstance(processor, Qwen2VLProcessor):  # Check if the processor is Qwen2VLProcessor
-            image_tokens = [151652, 151653, 151655]  # Specific image token IDs for Qwen2VLProcessor
-        else:
-            image_tokens = [processor.tokenizer.convert_tokens_to_ids(processor.image_token)]  # Convert image token to ID
-
-        # Mask image token IDs in the labels
-        for image_token_id in image_tokens:
-            labels[labels == image_token_id] = -100  # Mask image token IDs in labels
-
-        batch["labels"] = labels  # Add labels to the batch
-
-        return batch  # Return the prepared batch
+      # Get the texts and images, and apply the chat template
+      texts = [processor.apply_chat_template(example["messages"], tokenize=False) for example in examples]
+      image_inputs = [process_vision_info(example["messages"])[0] for example in examples]
+  
+      # Tokenize the texts and process the images
+      batch = processor(text=texts, images=image_inputs, return_tensors="pt", padding=True)
+  
+      # The labels are the input_ids, and we mask the padding tokens in the loss computation
+      labels = batch["input_ids"].clone()
+      labels[labels == processor.tokenizer.pad_token_id] = -100  #
+      # Ignore the image token index in the loss computation (model specific)
+      if isinstance(processor, Qwen2VLProcessor):
+          image_tokens = [151652,151653,151655]
+      else: 
+          image_tokens = [processor.tokenizer.convert_tokens_to_ids(processor.image_token)]
+      for image_token_id in image_tokens:
+          labels[labels == image_token_id] = -100
+      batch["labels"] = labels
+  
+      return batch
 
     trainer = SFTTrainer(
         model=model,
-        args=args,
+        args=training_args,
         train_dataset=formatted_dataset,
         data_collator=qwen_collate_fn,
         dataset_text_field="",
@@ -180,7 +173,11 @@ def train_model():
         tokenizer=processor.tokenizer
     )
 
+
+    print("train")
+    show_cuda_memory()
+
     trainer.train()
-    trainer.save_model(output_dir)
+    trainer.save_model(training_args.output_dir)
 
 
