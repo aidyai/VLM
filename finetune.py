@@ -2,8 +2,6 @@ import os
 from pathlib import Path
 from uuid import uuid4
 from modal import App, Volume, Image, gpu, Retries
-import subprocess
-
 
 
 # Model and storage setup
@@ -45,22 +43,28 @@ timeout = 7200  # 2 hrs
     retries=retries
 )
 
-# def train(experiment=None):
-    # # Generate a unique experiment name if not provided
-    # if experiment is None:
-    #     experiment = uuid4().hex[:8]
-    
-    # # Output directory for this experiment
-    # # output_dir = Path("/vol/experiment/output") / experiment
-    # # output_dir.mkdir(parents=True, exist_ok=True)
+
+import wandb
+from dotenv import load_dotenv
+from trl import SFTConfig, SFTTrainer
+from transformers import Qwen2VLProcessor
+from qwen_vl_utils import process_vision_info
+from peft import LoraConfig
+from huggingface_hub import login
+import torch
+from transformers import AutoModelForCausalLM, AutoProcessor, BitsAndBytesConfig
+from datasets import load_dataset
+from data import format_data
 
 
-def train():
 
+
+def train_model():
     HF_TOKEN = "hf_fwLedemoMdFfpurzXxaArMIOGlboMxGUup"
     WANDB_APIKEY = "0d505324ba165d96687f3624d4310bf171485b9d"
     WANDB_PROJECT = "usem_ocr"
-
+    DATASET_ID = "aidystark/usem_ocr"
+    
     # Ensure sensitive data is set
     if not HF_TOKEN or not WANDB_APIKEY:
         raise ValueError("Please set Hugging Face and WandB tokens in your environment.")
@@ -70,100 +74,110 @@ def train():
     import wandb
     login(token=HF_TOKEN)
     wandb.login(key=WANDB_APIKEY)
-    wandb.init(project=WANDB_PROJECT)
 
-    # Training parameters
-    GPUS_PER_NODE = "2"
-    NNODES = "1"
-    NODE_RANK = "0"
-    MASTER_ADDR = "localhost"
-    MASTER_PORT = "6001"
+    dataset = load_dataset(DATASET_ID, split='train')
+    formatted_dataset = [format_data(sample) for sample in dataset]
 
-    # Model and data paths
-    MODEL = "openbmb/MiniCPM-V-2_6"
-    LLM_TYPE = "qwen2"
-    MODEL_MAX_LENGTH = "2048"
-    
     current_dir = Path(__file__).parent
-    
-    TRAIN_DATA = current_dir / "train_ocr.json"
-    EVAL_DATA = current_dir / "eval_ocr.json"
-    finetune_path = current_dir / 'src' / 'train.py'
-    deeppseed_path = current_dir / 'utils' / 'ds_config_zero2.json'
-
     output_dir = current_dir / "usem_ocr"
     output_dir.mkdir(parents=True, exist_ok=True)
 
 
-    # Full training arguments
-    finetune_args = [
-        "torchrun",
-        "--nproc_per_node", GPUS_PER_NODE,
-        "--nnodes", NNODES,
-        "--node_rank", NODE_RANK,
-        "--master_addr", MASTER_ADDR,
-        "--master_port", MASTER_PORT,
-        str(finetune_path),
-        "--model_name_or_path", MODEL,
-        "--llm_type", LLM_TYPE,
-        "--data_path", str(TRAIN_DATA),
-        "--eval_data_path", str(EVAL_DATA),
-        "--remove_unused_columns", "false",
-        "--label_names", "labels",
-        "--prediction_loss_only", "false",
-        "--bf16", "false",
-        "--bf16_full_eval", "false",
-        "--fp16", "true",
-        "--fp16_full_eval", "true",
-        "--do_train",
-        "--do_eval",
-        "--tune_vision", "true",
-        "--tune_llm", "false",
-        "--use_lora", "true",
-        "--lora_target_modules", r"llm\..*layers\.\d+\.self_attn\.(q_proj|k_proj|v_proj|o_proj)",
-        "--model_max_length", MODEL_MAX_LENGTH,
-        "--max_slice_nums", "9",
-        "--max_steps", "10000",
-        "--eval_steps", "1000",
-        "--output_dir", str(output_dir),
-        "--logging_dir", str(output_dir),
-        "--logging_strategy", "steps",
-        "--per_device_train_batch_size", "1",
-        "--per_device_eval_batch_size", "1",
-        "--gradient_accumulation_steps", "1",
-        "--evaluation_strategy", "steps",
-        "--save_strategy", "steps",
-        "--save_steps", "100",
-        "--save_total_limit", "10",
-        "--learning_rate", "1e-6",
-        "--weight_decay", "0.1",
-        "--adam_beta2", "0.95",
-        "--warmup_ratio", "0.01",
-        "--lr_scheduler_type", "cosine",
-        "--logging_steps", "1",
-        "--gradient_checkpointing", "true",
-        "--deepspeed", str(deeppseed_path),
-        "--report_to", "wandb"
-    ]
+    model_id = "Qwen/Qwen2-VL-7B-Instruct" 
 
-    # Set the PYTHONPATH to include the necessary directories
-    # env = os.environ.copy()
-    # env['PYTHONPATH'] = f"{os.getcwd()}/VLM/src:" + env.get('PYTHONPATH', '')
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True, bnb_4bit_use_double_quant=True, 
+        bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.bfloat16
+    )
+
+    # load the processor
+    processor = AutoProcessor.from_pretrained(
+        model_id,
+        trust_remote_code=True,
+    )
+
+    # load the model
+    model = AutoModelForVision2Seq.from_pretrained(
+        model_id,
+        device_map="auto",
+        # attn_implementation="flash_attention_2", # not supported for training
+        torch_dtype=torch.bfloat16,
+        quantization_config=bnb_config
+    )
 
 
-    # Run the command in a subprocess
-    try:
-        result = subprocess.run(
-            finetune_args,
-            check=True,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        print('Output:', result.stdout)
-    except subprocess.CalledProcessError as e:
-        print('Command failed. Return code:', e.returncode)
-        print('Output:', e.stdout)
-        print('Error:', e.stderr)
+    peft_config = LoraConfig(
+        lora_alpha=16,
+        lora_dropout=0.05,
+        r=8,
+        bias="none",
+        target_modules=["q_proj", "v_proj"],
+        task_type="CAUSAL_LM"
+    )
 
-    print(f"Training completed for experiment")
+    args = SFTConfig(
+        output_dir=output_dir,  # Now using the passed parameter for output directory
+        num_train_epochs=3,
+        per_device_train_batch_size=4,
+        gradient_accumulation_steps=8,
+        # gradient_checkpointing=True,
+        optim="adamw_torch_fused",
+        logging_steps=5,
+        save_strategy="epoch",
+        learning_rate=2e-4,
+        bf16=True,
+        tf32=True,
+        max_grad_norm=0.3,
+        warmup_ratio=0.03,
+        lr_scheduler_type="constant",
+        push_to_hub=True,
+        report_to="wandb",
+        # gradient_checkpointing_kwargs={"use_reentrant": False},
+        dataset_text_field="",
+        dataset_kwargs={"skip_prepare_dataset": True}
+    )
+    args.remove_unused_columns = False
+
+    def collate_fn_molmo(examples):
+        # Extract and process text and visual information from each example
+        texts = [processor.apply_chat_template(example["messages"], tokenize=False) for example in examples]
+        image_inputs, _ = process_vision_info([example["messages"] for example in examples])
+        
+        # If image_inputs is None, you may want to handle it appropriately
+        if image_inputs is None:
+            image_inputs = []  # or handle as needed
+
+        # Tokenize the texts and process the images using the processor
+        batch = processor(text=texts, images=image_inputs, return_tensors="pt", padding=True)
+
+        # Create labels for the language model
+        labels = batch["input_ids"].clone()
+        labels[labels == processor.tokenizer.pad_token_id] = -100  # Ignore padding tokens in loss calculation
+
+        # Optionally, exclude image tokens from the loss calculation
+        image_token_id = processor.tokenizer.convert_tokens_to_ids(processor.image_token)
+        labels[labels == image_token_id] = -100
+
+        # Add the labels to the batch
+        batch["labels"] = labels
+
+        # Move tensors to the appropriate device
+        batch = {k: v.to(torch.bfloat16 if bnb_config.bnb_4bit_compute_dtype == torch.bfloat16 else torch.float32) 
+                for k, v in batch.items()}
+
+        return batch
+
+    trainer = SFTTrainer(
+        model=model,
+        args=args,
+        train_dataset=formatted_dataset,
+        data_collator=collate_fn_molmo,
+        dataset_text_field="",
+        peft_config=peft_config,
+        tokenizer=processor.tokenizer
+    )
+
+    trainer.train()
+    trainer.save_model(output_dir)
+
+
