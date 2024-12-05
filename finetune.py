@@ -38,7 +38,8 @@ timeout = 7200  # 2 hrs
 
 @app.function(
     volumes={"/vol/experiment": volume},
-    gpu=gpu.A100(count=2),
+    gpu=gpu.A100(size="80GB", count=4)
+    # gpu=gpu.A100(count=2),
     timeout=timeout, 
     retries=retries
 )
@@ -115,7 +116,7 @@ def train_model():
         num_train_epochs=3,
         per_device_train_batch_size=4,
         gradient_accumulation_steps=8,
-        # gradient_checkpointing=True,
+        gradient_checkpointing=True,
         optim="adamw_torch_fused",
         logging_steps=5,
         save_strategy="epoch",
@@ -127,7 +128,7 @@ def train_model():
         lr_scheduler_type="constant",
         push_to_hub=True,
         report_to="wandb",
-        # gradient_checkpointing_kwargs={"use_reentrant": False},
+        gradient_checkpointing_kwargs={"use_reentrant": False},
         dataset_text_field="",
         dataset_kwargs={"skip_prepare_dataset": True}
     )
@@ -175,7 +176,6 @@ def train_model():
 
 
     print("train")
-    show_cuda_memory()
 
     trainer.train()
     trainer.save_model(training_args.output_dir)
