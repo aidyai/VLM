@@ -3,14 +3,17 @@ from datetime import datetime
 from pathlib import Path
 import secrets
 import yaml
+from uuid import uuid4
 from modal import App, Volume, Image, gpu, Retries
-from .common import (
+from VLM.config.common import (
     app,
     ocr_vlm,
     HOURS,
     MINUTES,
+    model,
+    outputs,
     MODEL_PATH,
-    OUTPUT_PATH,
+    OUTPUTS_PATH,
 )
 
 
@@ -31,13 +34,24 @@ if len(GPU_CONFIG.split(":")) <= 1:
     timeout=24 * HOURS,
 )
 
-def train():
-
+def train(experiment=None):
+    # Generate a unique experiment name if not provided
+    if experiment is None:
+        experiment = uuid4().hex[:8]
+    
+    
     import torch
+    from huggingface_hub import login
     import wandb
     import subprocess
     
+    HF_TOKEN = "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"
+    WANDB_APIKEY = "0d505324ba165d96687f3624d4310bf171485b9d"
+    WANDB_PROJECT = "usem_ocr"
 
+    # Ensure sensitive data is set
+    if not HF_TOKEN or not WANDB_APIKEY:
+        raise ValueError("Please set Hugging Face and WandB tokens in your environment.")
 
     current_dir = Path(__file__).parent
     config_file = current_dir/ 'config' / 'deepspeed_zero3.yaml'
@@ -48,7 +62,6 @@ def train():
     wandb.login(key=WANDB_APIKEY)
     wandb.init(
         project=WANDB_PROJECT,
-        config=training_args,
         )
 
     print(f"Using {torch.cuda.device_count()} {torch.cuda.get_device_name()} GPU(s).")
@@ -58,9 +71,12 @@ def train():
     
 
     # Parse configuration
+    DATASET_NAME = "aidystark/usem_ocr"
     MODEL_NAME = "Qwen/Qwen2-VL-7B-Instruct" 
     #####################################################
-    output_dir=str(checkpoint / "usem_ocr"),
+    output_dir=str(OUTPUTS_PATH / "usem_ocr")
+
+
 
     # Launch training
     print("Spawning container for training.")
@@ -74,12 +90,13 @@ def train():
         "--model_name_or_path", str(MODEL_NAME),
         "--per_device_train_batch_size", "8",
         "--gradient_accumulation_steps", "8",
-        "--output_dir", str(output_dir),
+        "--output_dir", output_dir,
         "--bf16",
         "--torch_dtype", "bfloat16",
         "--gradient_checkpointing",
         f"{'--report_to wandb' if ALLOW_WANDB else ''}"
     ]
+
 
     model.commit()
     print("✅ done")
@@ -103,17 +120,11 @@ def train():
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
- 
+# Local entrypoint to start the training job
+@app.local_entrypoint()
+def main(experiment: str = None):
+    if experiment is None:
+        experiment = uuid4().hex[:8]
+    
+    print(f"🚀 Starting OCR VLM training experiment: {experiment}")
+    train.remote(experiment)
