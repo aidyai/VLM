@@ -2,11 +2,12 @@ import os
 from pathlib import PurePosixPath
 from typing import Union
 import modal
-from pathlib import Path
 from modal import App, Volume, Image, gpu, Retries
 import string
 import time
 from pathlib import Path
+from pathlib import Path
+
 
 
 
@@ -29,9 +30,9 @@ ocr_vlm = (
     Image.from_registry(f"nvidia/cuda:{tag}", add_python="3.11")
     .apt_install("git")
     .pip_install(
-        "ninja", "packaging", "wheel", "torch", "accelerate",
-        "datasets", "bitsandbytes", "peft", "trl", 
-        "huggingface_hub", "wandb", "deepspeed", 
+        "ninja", "pillow", "packaging", "wheel", "torch", "accelerate",
+        "datasets", "torchvision", "qwen_vl_utils", "bitsandbytes", "peft", "trl", 
+        "huggingface_hub", "wandb", "deepspeed==0.15.4", 
         "transformers", "einops", "hf_transfer", "shortuuid",
     ).env(
         dict(
@@ -57,7 +58,9 @@ MODEL_REVISION = "d3a53f2484fce9d62fff115a5ddfc833f873bfde"
 with ocr_vlm.imports():
     import torch
     from huggingface_hub import snapshot_download
-    from transformers import AutoModelForVision2Seq, AutoProcessor
+    from transformers import AutoModelForVision2Seq, AutoProcessor, Qwen2VLProcessor
+    from qwen_vl_utils import process_vision_info
+
 
 
 @app.function(
@@ -75,6 +78,70 @@ def download_model(revision=MODEL_REVISION):
         torch_dtype=torch.bfloat16,
         revision=revision,
     )
+
+
+
+# Data collator function
+
+def qwen_collate_fn(examples, processor):
+    # Process text inputs using the processor
+    texts = [processor.apply_chat_template(example["messages"], tokenize=False) for example in examples]
+    # Process vision inputs from the messages
+    image_inputs = [process_vision_info(example["messages"])[0] for example in examples]
+
+    # Create a batch of inputs using the processor
+    batch = processor(text=texts, images=image_inputs, return_tensors="pt", padding=True)
+
+    # Ensure input_ids are in the correct dtype (torch.long)
+    batch["input_ids"] = batch["input_ids"].long()
+
+    # Clone input_ids to prepare labels
+    labels = batch["input_ids"].clone()
+
+    # Mask padding tokens in the loss computation
+    labels[labels == processor.tokenizer.pad_token_id] = -100
+
+    # Ignore the image token index in the loss computation
+    if isinstance(processor, Qwen2VLProcessor):
+        image_tokens = [151652, 151653, 151655]
+    else:
+        image_tokens = [processor.tokenizer.convert_tokens_to_ids(processor.image_token)]
+    for image_token_id in image_tokens:
+        labels[labels == image_token_id] = -100
+    
+    # Assign processed labels back to the batch
+    batch["labels"] = labels
+
+    return batch
+
+
+
+
+# def qwen_collate_fn(examples, processor):
+#     # Implement your collate function logic
+#     texts = [processor.apply_chat_template(example["messages"], tokenize=False) for example in examples]
+#     image_inputs = [process_vision_info(example["messages"])[0] for example in examples]
+
+#     batch = processor(text=texts, images=image_inputs, return_tensors="pt", padding=True)
+
+#     # The labels are the input_ids, and we mask the padding tokens in the loss computation
+#     labels = batch["input_ids"].clone()
+#     labels[labels == processor.tokenizer.pad_token_id] = -100  #
+#     # Ignore the image token index in the loss computation (model specific)
+#     if isinstance(processor, Qwen2VLProcessor):
+#         image_tokens = [151652,151653,151655]
+#     else: 
+#         image_tokens = [processor.tokenizer.convert_tokens_to_ids(processor.image_token)]
+#     for image_token_id in image_tokens:
+#         labels[labels == image_token_id] = -100
+#     batch["labels"] = labels
+ 
+#     return batch
+
+
+
+
+
 
 
 # # Ensure base model is downloaded

@@ -2,7 +2,7 @@ import os
 import torch
 from datasets import load_dataset
 from transformers import AutoModelForVision2Seq, AutoProcessor
-from .dataset import format_data
+from VLM.src.dataset import format_data
 from trl import (
     ModelConfig,
     ScriptArguments,
@@ -13,10 +13,25 @@ from trl import (
     get_peft_config,
     get_quantization_config,
 )
+from functools import partial
+from transformers import Qwen2VLProcessor
+from VLM.config.common import (
+    app,
+    ocr_vlm,
+    HOURS,
+    MINUTES,
+    model,
+    outputs,
+    MODEL_PATH,
+    OUTPUTS_PATH,
+    MODEL_NAME,
+    qwen_collate_fn,
+)
 
 
 
-def main():
+if __name__ == "__main__":
+
     # Parse arguments
     parser = TrlParser((ScriptArguments, SFTConfig, ModelConfig))
     script_args, training_args, model_config = parser.parse_args_and_config()
@@ -54,37 +69,19 @@ def main():
 
     # Load and format dataset
     # Use the dataset name from script arguments or hardcode if needed
-    dataset_name = script_args.dataset_name 
+    dataset_name = script_args.dataset_name
     
     # Load dataset/format dataset
     dataset = load_dataset(dataset_name, split='train')
     formatted_dataset = [format_data(sample) for sample in dataset]
 
-    # Data collator function
-    def qwen_collate_fn(examples):
-        # Implement your collate function logic
-        # This is a placeholder - modify according to your specific requirements
-        texts = [processor.apply_chat_template(example["messages"], tokenize=False) for example in examples]
-        image_inputs = [process_vision_info(example["messages"])[0] for example in examples]
-    
-        batch = processor(text=texts, images=image_inputs, return_tensors="pt", padding=True)
-    
-        labels = batch["input_ids"].clone()
-        labels[labels == processor.tokenizer.pad_token_id] = -100
-        
-        # Add logic for handling image tokens
-        batch["labels"] = labels
-    
-        return batch
-
-
-
+   
     # Initialize Trainer
     trainer = SFTTrainer(
         model=model,
         args=training_args,
         train_dataset=formatted_dataset,
-        data_collator=qwen_collate_fn,
+        data_collator=partial(qwen_collate_fn, processor=processor),
         dataset_text_field="",
         tokenizer=processor.tokenizer,
         peft_config=get_peft_config(model_config),
